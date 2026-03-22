@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS "OPVOLGING" (
 	"id"	INTEGER,
 	"datum"	TEXT NOT NULL,
 	"type"	TEXT NOT NULL CHECK("type" IN ('contact', 'controle')),
-	"omschrijving"	INTEGER,
+	"omschrijving"	TEXT,
 	"student"	INTEGER,
 	PRIMARY KEY("id")
 );

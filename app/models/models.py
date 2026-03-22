@@ -8,7 +8,9 @@ concrete subclass type for call sites. E.g. when a subclass of `Student` calls
 `Sequence[Student]`.
 
 Notes:
-- The DDL defines `OPVOLGING.omschrijving` as INTEGER. This file follows that DDL.
+- The database column `OPVOLGING.omschrijving` is TEXT. This model maps
+  `omschrijving` to SQLAlchemy's `Text` type so the Python model matches the
+  current database schema.
 - We use `Sequence[...]` for collection return types to avoid variance pitfalls
   while still preserving concrete element types via TypeVars.
 """
@@ -18,7 +20,7 @@ from __future__ import annotations
 import enum
 from typing import Any, Dict, Optional, Sequence, Type, TypeVar
 
-from sqlalchemy import CheckConstraint, Column, ForeignKey, Integer, String
+from sqlalchemy import CheckConstraint, Column, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Session, relationship
 
 from app.db.session import Base
@@ -120,10 +122,10 @@ class Opvolging(Base):
     __tablename__ = "OPVOLGING"
 
     id = Column(Integer, primary_key=True)
-    datum = Column(String, nullable=False)  # DDL uses TEXT; keep as String here.
+    datum = Column(String, nullable=False)  # In the database this column is TEXT; keep it as String in the model.
     type = Column(String, nullable=False)  # Enforced by check constraint below.
-    # Note: the DDL shows `omschrijving` as INTEGER; we follow the DDL.
-    omschrijving = Column(Integer, nullable=True)
+    # Note: the database column `omschrijving` is TEXT; map to SQLAlchemy `Text`.
+    omschrijving = Column(Text, nullable=True)
     student = Column(Integer, ForeignKey("STUDENT.id"), nullable=True)
 
     # relationship back to Student
