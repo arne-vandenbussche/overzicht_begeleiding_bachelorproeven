@@ -1,21 +1,28 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-CLI entry point using Rich for overzicht_begeleiding_bachelorproeven.
+CLI entry point using Rich (when available) with centralized input helpers.
 
-Dit vervangt de eenvoudige tekst-output met een rijkere tabelweergave (kleur,
-uitlijning) met behulp van de `rich` library. Het gedrag blijft hetzelfde:
-- Toon lijst met studenten en de datum van hun meest recente opvolging.
-- Laat de gebruiker een nummer kiezen (placeholder: detailweergave niet geïmplementeerd).
-- 'q' sluit de applicatie.
+This refactor centralizes input/validation helpers and the `add_opvolging`
+workflow so both the Rich UI and the plain-text fallback share the same logic.
 
-Als `rich` niet beschikbaar is, valt de CLI terug op een eenvoudige tekstweergave
-met dezelfde interactie.
+Behavior:
+- Show list of students with their most recent opvolging date.
+- Choose a student number to open the student detail screen.
+- In the student detail screen you can:
+  - Edit student (placeholder)
+  - Add opvolging (implemented, with date validation and default to today)
+  - Delete opvolging (placeholder)
+  - Edit opvolging (placeholder)
+  - Press 'b' to return to the main screen
+
+The CLI prefers `rich` for nicer output but falls back to plain text if it's not installed.
 """
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, List, Optional, TYPE_CHECKING
+from datetime import date
 
 try:
     from rich.console import Console
@@ -24,16 +31,26 @@ try:
     from rich.prompt import Prompt
     from rich.align import Align
     from rich.text import Text
+    _HAS_RICH = True
 except Exception:
     Console = None  # type: ignore
+    _HAS_RICH = False
+
+if TYPE_CHECKING:
+    # Import Rich symbols only for type checking / IDEs. These imports are not required at runtime.
+    from rich.console import Console
+    from rich.table import Table
+    from rich.panel import Panel
+    from rich.prompt import Prompt
+    from rich.align import Align
+    from rich.text import Text
 
 from app.repository.repository import StudentRepository, OpvolgingRepository
-from datetime import date
 
-# UI text constants (centralized so rendering / prompts share the same strings)
+# Centralized UI text
 MAIN_OPTIONS = [
     "Opties:",
-    "  [nummer] - Bekijk opvolgingen voor de gekozen student (nog niet geïmplementeerd)",
+    "  [nummer] - Bekijk opvolgingen voor de gekozen student",
     "  q        - Afsluiten",
 ]
 
@@ -47,29 +64,13 @@ STUDENT_ACTIONS = [
 ]
 
 
-def get_last_opvolging_date(student_id: int) -> Optional[str]:
-    """
-    Geef de 'datum' van de meest recente Opvolging terug voor `student_id`,
-    of None wanneer er geen records zijn.
-    """
-    try:
-        ops = OpvolgingRepository.list_for_student(student_id)
-    except Exception:
-        # Falen bij ophalen van opvolgingen mag het hoofdscherm niet breken.
-        return None
-
-    if not ops:
-        return None
-    last = ops[-1]
-    return getattr(last, "datum", None)
-
-
+# ------------------------------
+# Helpers: validation / input
+# ------------------------------
 def validate_date_str(s: str) -> Optional[str]:
     """
     Validate a date string in ISO format YYYY-MM-DD.
-
-    Returns the normalized YYYY-MM-DD string when valid, otherwise returns None.
-    This uses datetime.date.fromisoformat which accepts the ISO date format.
+    Returns normalized YYYY-MM-DD when valid, otherwise None.
     """
     if not s:
         return None
@@ -80,58 +81,93 @@ def validate_date_str(s: str) -> Optional[str]:
         return None
 
 
-# --- Shared UI helpers to avoid duplication ---------------------------------------
+def ask_date(console: Any = None) -> str:
+    """
+    Ask the user for a date. If the user presses Enter without providing a date,
+    today's date is used as default.
 
-def print_main_options_text() -> None:
-    """Print the main menu options in the plain-text fallback."""
+    Returns a validated date string (YYYY-MM-DD). This function loops until a valid
+    date is provided.
+    """
+    today_str = date.today().isoformat()
+    while True:
+        if _HAS_RICH and console is not None:
+            try:
+                datum_input = Prompt.ask(f"  Datum (YYYY-MM-DD) [ENTER = {today_str}]", default=today_str)
+            except Exception:
+                # fallback to standard input
+                datum_input = input(f"  Datum (YYYY-MM-DD) [ENTER = {today_str}]: ").strip()
+                if not datum_input:
+                    datum_input = today_str
+        else:
+            datum_input = input(f"  Datum (YYYY-MM-DD) [ENTER = {today_str}]: ").strip()
+            if not datum_input:
+                datum_input = today_str
+
+        datum_norm = validate_date_str(datum_input)
+        if datum_norm is None:
+            if _HAS_RICH and console is not None:
+                console.print("[red]Ongeldige datum. Gebruik YYYY-MM-DD (bv. 2023-12-31).[/red]")
+            else:
+                print("Ongeldige datum. Gebruik YYYY-MM-DD (bv. 2023-12-31).")
+            continue
+        return datum_norm
+
+
+def ask_type(console: Any = None) -> str:
+    """
+    Ask for the opvolging type. Must be 'contact' or 'controle'.
+    Loops until a valid choice is given.
+    """
+    while True:
+        if _HAS_RICH and console is not None:
+            try:
+                t = Prompt.ask("  Type", choices=["contact", "controle"], default="contact")
+            except Exception:
+                t = input("  Type ('contact' of 'controle') [default: contact]: ").strip() or "contact"
+        else:
+            t = input("  Type ('contact' of 'controle') [default: contact]: ").strip() or "contact"
+
+        if t in ("contact", "controle"):
+            return t
+        if _HAS_RICH and console is not None:
+            console.print("[red]Ongeldig type. Voer 'contact' of 'controle' in.[/red]")
+        else:
+            print("Ongeldig type. Voer 'contact' of 'controle' in.")
+
+
+def ask_omschrijving(console: Any = None) -> Optional[str]:
+    """
+    Ask for an optional textual omschrijving. Returns None when left empty.
+    """
+    if _HAS_RICH and console is not None:
+        try:
+            oms = Prompt.ask("  Omschrijving (optioneel)", default="")
+        except Exception:
+            oms = input("  Omschrijving (optioneel): ").strip()
+    else:
+        oms = input("  Omschrijving (optioneel): ").strip()
+    return oms if oms else None
+
+
+# ------------------------------
+# Rendering helpers
+# ------------------------------
+def render_main_options_text() -> None:
     for line in MAIN_OPTIONS:
         print(line)
     print()
 
 
-def render_main_options(console: "Console") -> None:
-    """Render the main menu options as a Rich Panel."""
+def render_main_options_rich(console: Any) -> None:
     opts = Text()
-    # Use MAIN_OPTIONS constant so the same text is used everywhere
     opts.append(MAIN_OPTIONS[0] + "\n", style="bold")
     for line in MAIN_OPTIONS[1:]:
         opts.append(line + "\n")
     console.print(Panel(opts, subtitle="Gebruik", expand=False))
 
 
-def prompt_student_action_text() -> str:
-    """
-    Show the student actions menu (plain-text) and return the user's choice.
-    Keeps the same prompts as before but extracted to a single function.
-    """
-    for line in STUDENT_ACTIONS:
-        print(line)
-    print()
-    return input("Kies actie (nummer of 'b' om terug te keren): ").strip()
-
-
-def prompt_student_action_rich(console: "Console") -> str:
-    """
-    Show the student actions menu using Rich and return the user's choice.
-    Falls back to regular input if Prompt.ask fails.
-    """
-    actions = Text()
-    # Use STUDENT_ACTIONS so presentation matches the plain-text fallback
-    actions.append(STUDENT_ACTIONS[0] + "\n", style="bold")
-    for line in STUDENT_ACTIONS[1:]:
-        actions.append(line + "\n")
-    console.print(Panel(actions, subtitle="Gebruik", expand=False))
-    try:
-        return Prompt.ask("Kies actie (nummer of 'b' om terug te keren)")
-    except Exception:
-        return input("Kies actie (nummer of 'b' om terug te keren): ").strip()
-
-# -------------------------------------------------------------------------------
-
-
-
-def render_table_text(students: List[object]) -> None:
-    """Fallback tekstweergave wanneer Rich niet beschikbaar is."""
+def render_students_text(students: List[object]) -> None:
     header = f"{' #':>3} | {'ID':4} | {'Naam':30} | {'Bedrijf':20} | Laatste opvolging"
     sep = "-" * len(header)
     print("=" * len(header))
@@ -150,11 +186,10 @@ def render_table_text(students: List[object]) -> None:
             last_str = last or "N.v.t."
             print(f"{idx:3d} | {str(sid):4s} | {name:30s} | {company:20s} | {last_str}")
     print(sep)
-    print_main_options_text()
+    render_main_options_text()
 
 
-def render_table_rich(console: "Console", students: List[object]) -> None:
-    """Rich-gebaseerde tabelweergave."""
+def render_students_rich(console: Any, students: List[object]) -> None:
     table = Table(show_header=True, header_style="bold magenta")
     table.add_column("#", style="dim", width=3, justify="right")
     table.add_column("ID", style="cyan", width=6)
@@ -177,287 +212,502 @@ def render_table_rich(console: "Console", students: List[object]) -> None:
     console.print(Panel(Align.center(title), expand=True))
     console.print(table)
     console.print()
-    render_main_options(console)
+    render_main_options_rich(console)
 
 
-def show_students_screen_rich(console: "Console", limit: Optional[int] = None) -> None:
-    """Laad studenten via de repository en render met rich."""
-    try:
-        students: List[object] = StudentRepository.list_all(limit=limit)  # type: ignore[arg-type]
-    except Exception as exc:
-        console.print("[red]Fout bij laden van studenten uit de database:[/red]")
-        console.print(f"[red]{exc}[/red]")
-        return
-
-    render_table_rich(console, students)
-
-
-def show_students_screen_text(limit: Optional[int] = None) -> None:
-    """Laad studenten via de repository en render als tekst (fallback)."""
-    try:
-        students: List[object] = StudentRepository.list_all(limit=limit)  # type: ignore[arg-type]
-    except Exception as exc:
-        print("Fout bij laden van studenten uit de database:")
-        print(" ", exc)
-        return
-
-    render_table_text(students)
-
-
-def _render_student_detail_text(student: object) -> None:
-    """Tekstfallback: toon studentgegevens en lijst met opvolgingen, en een menu met acties.
-    Blijft zichtbaar totdat de gebruiker 'b' kiest.
+# ------------------------------
+# Business helpers
+# ------------------------------
+def get_last_opvolging_date(student_id: int) -> Optional[str]:
     """
-    while True:
-        print("=" * 80)
-        print("Student:".ljust(12), f"{student.voornaam} {student.naam}")
-        print("ID:".ljust(12), getattr(student, "id", "?"))
-        print("Bedrijf:".ljust(12), student.bedrijf or "-")
-        print("ACE project:".ljust(12), student.aceproject or "-")
-        print("Opvolgingsdocument:".ljust(12), student.opvolgingsdocument or "-")
-        print("-" * 80)
-        print("Opvolgingen:")
-        ops = OpvolgingRepository.list_for_student(getattr(student, "id"))
-        if not ops:
-            print("  (geen opvolgingen gevonden)")
-        else:
-            for i, o in enumerate(ops, start=1):
-                oms = getattr(o, "omschrijving", "")
-                print(f"  {i:2d}. ID={getattr(o,'id','?')}, Datum={getattr(o,'datum', '')}, Type={getattr(o,'type','')}, Omschrijving={oms}")
-        print("-" * 80)
-
-        choice = prompt_student_action_text()
-        if not choice or choice.lower() == "b":
-            return
-
-        if choice == "1":
-            print("Wijzig studentgegevens: nog niet geïmplementeerd (placeholder).")
-            input("Druk op Enter om terug te keren...")
-            # blijf in detail scherm
-            continue
-
-        elif choice == "2":
-            # Implementatie: voeg een nieuwe Opvolging toe voor deze student, met datumvalidatie
-            # Standaard: ENTER = vandaag
-            print("Opvolging toevoegen")
-            while True:
-                datum_in = input("  Datum (YYYY-MM-DD) [ENTER = vandaag]: ").strip()
-                if not datum_in:
-                    # Gebruik vandaag als standaard
-                    datum = date.today().isoformat()
-                    print(f"  Standaarddatum gebruikt: {datum}")
-                    break
-                datum_norm = validate_date_str(datum_in)
-                if datum_norm is None:
-                    print("  Ongeldige datum. Gebruik het formaat YYYY-MM-DD (bv. 2023-12-31).")
-                    continue
-                # valide datum verkregen
-                datum = datum_norm
-                break
-            # Als we hier geen datum hebben (één of andere reden), annuleer
-            if not (datum):
-                input("Druk op Enter om terug te keren...")
-                continue
-            else:
-                # Vraag type en valideer
-                while True:
-                    type_input = input("  Type ('contact' of 'controle') [verplicht]: ").strip()
-                    if type_input in ("contact", "controle"):
-                        break
-                    print("  Ongeldig type. Voer 'contact' of 'controle' in.")
-                # Omschrijving (optioneel, tekstveld)
-                oms_txt = input("  Omschrijving (optioneel): ").strip()
-                oms_val = oms_txt if oms_txt else None
-                data = {
-                    "datum": datum,
-                    "type": type_input,
-                    "omschrijving": oms_val,
-                    "student": getattr(student, "id"),
-                }
-                try:
-                    new_op = OpvolgingRepository.create(data)
-                    print(f"  Opvolging succesvol toegevoegd (id={getattr(new_op, 'id', '?')}).")
-                except Exception as e:
-                    print("  Fout bij toevoegen van opvolging:", e)
-                input("Druk op Enter om terug te keren...")
-                # terug naar de detailweergave (loop opnieuw)
-                continue
-
-        elif choice == "3":
-            print("Opvolging verwijderen: nog niet geïmplementeerd (placeholder).")
-            input("Druk op Enter om terug te keren...")
-            continue
-
-        elif choice == "4":
-            print("Opvolging bewerken: nog niet geïmplementeerd (placeholder).")
-            input("Druk op Enter om terug te keren...")
-            continue
-
-        else:
-            print("Onbekende optie.")
-            input("Druk op Enter om terug te keren...")
-            continue
-
-
-def _render_student_detail_rich(console: "Console", student: object) -> None:
-    """Rich-weergave: toon studentgegevens en lijst met opvolgingen en menu met acties.
-    Blijft zichtbaar totdat de gebruiker 'b' kiest; na acties keert het scherm terug naar
-    hetzelfde student-detail (in plaats van hoofdscherm).
+    Geef de 'datum' van de meest recente Opvolging terug voor `student_id`,
+    of None wanneer er geen records zijn.
     """
-    while True:
-        # Studentgegevens
-        title = Text(f"Details student: {student.voornaam} {student.naam}", style="bold white on green")
-        console.print(Panel(title, expand=True))
-        info_table = Table(show_header=False, box=None)
-        info_table.add_column(justify="right", style="bold")
-        info_table.add_column()
-        info_table.add_row("ID", str(getattr(student, "id", "?")))
-        info_table.add_row("Bedrijf", student.bedrijf or "-")
-        info_table.add_row("ACE project", student.aceproject or "-")
-        info_table.add_row("Opvolgingsdocument", student.opvolgingsdocument or "-")
-        console.print(info_table)
-        console.print()
+    try:
+        ops = OpvolgingRepository.list_for_student(student_id)
+    except Exception:
+        return None
+    if not ops:
+        return None
+    last = ops[-1]
+    return getattr(last, "datum", None)
 
-        # Opvolgingen
+
+def add_opvolging_for_student(student: object, console: Any = None) -> bool:
+    """
+    Interactieve routine om een opvolging toe te voegen voor `student`.
+    Returns True when a new opvolging was created, False otherwise.
+    """
+    # Vraag datum (ENTER => vandaag)
+    datum = ask_date(console)
+    # Vraag type
+    type_input = ask_type(console)
+    # Vraag omschrijving
+    oms_val = ask_omschrijving(console)
+
+    data = {
+        "datum": datum,
+        "type": type_input,
+        "omschrijving": oms_val,
+        "student": getattr(student, "id"),
+    }
+
+    try:
+        new_op = OpvolgingRepository.create(data)
+        if _HAS_RICH and console is not None:
+            console.print(Panel(f"Opvolging succesvol toegevoegd (id={getattr(new_op, 'id', '?')}).", title="Succes", style="green"))
+        else:
+            print(f"Opvolging succesvol toegevoegd (id={getattr(new_op, 'id', '?')}).")
+        return True
+    except Exception as exc:
+        if _HAS_RICH and console is not None:
+            console.print(Panel(f"Fout bij toevoegen van opvolging: {exc}", title="Fout", style="red"))
+        else:
+            print("Fout bij toevoegen van opvolging:", exc)
+        return False
+
+
+def delete_opvolging_for_student(student: object, console: Any = None) -> bool:
+    """
+    Interactieve routine om een opvolging van `student` te verwijderen.
+    Returns True when a deletion occurred, False otherwise.
+    """
+    try:
         ops = OpvolgingRepository.list_for_student(getattr(student, "id"))
-        if not ops:
+    except Exception as exc:
+        if _HAS_RICH and console is not None:
+            console.print(Panel(f"Fout bij ophalen van opvolgingen: {exc}", title="Fout", style="red"))
+        else:
+            print("Fout bij ophalen van opvolgingen:", exc)
+        return False
+
+    if not ops:
+        if _HAS_RICH and console is not None:
             console.print(Panel("(geen opvolgingen gevonden)", title="Opvolgingen", style="dim"))
         else:
-            ops_table = Table(show_header=True, header_style="bold magenta")
-            ops_table.add_column("#", width=3, justify="right")
-            ops_table.add_column("ID", style="cyan", width=6)
-            ops_table.add_column("Datum", style="green")
-            ops_table.add_column("Type", style="yellow")
-            ops_table.add_column("Omschrijving", style="white")
-            for i, o in enumerate(ops, start=1):
-                ops_table.add_row(str(i), str(getattr(o, "id", "?")), str(getattr(o, "datum", "")), str(getattr(o, "type", "")), str(getattr(o, "omschrijving", "")))
-            console.print(Panel(ops_table, title="Opvolgingen"))
+            print("(geen opvolgingen gevonden)")
+        return False
 
-        # Acties
-        choice = prompt_student_action_rich(console)
+    # Toon lijst met opvolgingen en laat selectie maken
+    if _HAS_RICH and console is not None:
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("#", width=3, justify="right")
+        table.add_column("ID", style="cyan", width=6)
+        table.add_column("Datum", style="green")
+        table.add_column("Type", style="yellow")
+        table.add_column("Omschrijving", style="white")
+        for i, o in enumerate(ops, start=1):
+            table.add_row(str(i), str(getattr(o, "id", "?")), str(getattr(o, "datum", "")), str(getattr(o, "type", "")), str(getattr(o, "omschrijving", "")))
+        console.print(Panel(table, title="Kies te verwijderen opvolging"))
+        # Ask for index
+        while True:
+            try:
+                choice = Prompt.ask("Voer nummer van opvolging om te verwijderen (of 'c' om te annuleren)")
+            except Exception:
+                choice = input("Voer nummer van opvolging om te verwijderen (of 'c' om te annuleren): ").strip()
+            if not choice:
+                continue
+            if choice.lower() == "c":
+                return False
+            try:
+                idx = int(choice)
+            except Exception:
+                console.print("[red]Ongeldige invoer, voer een nummer of 'c' in.[/red]")
+                continue
+            if idx < 1 or idx > len(ops):
+                console.print(f"[red]Kies een nummer tussen 1 en {len(ops)}.[/red]")
+                continue
+            selected = ops[idx - 1]
+            # Confirm deletion
+            try:
+                confirm = Prompt.ask(f"Weet je zeker dat je opvolging id={getattr(selected,'id','?')} wilt verwijderen? (j/n)", choices=["j", "n"], default="n")
+            except Exception:
+                confirm = input(f"Weet je zeker dat je opvolging id={getattr(selected,'id','?')} wilt verwijderen? (j/n): ").strip().lower()
+            if confirm.lower().startswith("j"):
+                try:
+                    success = OpvolgingRepository.delete(getattr(selected, "id"))
+                    if success:
+                        console.print(Panel("Opvolging verwijderd.", title="Succes", style="green"))
+                        return True
+                    else:
+                        console.print(Panel("Opvolging kon niet verwijderd worden.", title="Fout", style="red"))
+                        return False
+                except Exception as exc:
+                    console.print(Panel(f"Fout bij verwijderen: {exc}", title="Fout", style="red"))
+                    return False
+            else:
+                return False
+    else:
+        # Plain text path
+        print("Kies te verwijderen opvolging:")
+        for i, o in enumerate(ops, start=1):
+            print(f"  {i:2d}. ID={getattr(o,'id','?')}, Datum={getattr(o,'datum','')}, Type={getattr(o,'type','')}, Omschrijving={getattr(o,'omschrijving','')}")
+        while True:
+            choice = input("Voer nummer van opvolging om te verwijderen (of 'c' om te annuleren): ").strip()
+            if not choice:
+                continue
+            if choice.lower() == "c":
+                return False
+            try:
+                idx = int(choice)
+            except Exception:
+                print("Ongeldige invoer, voer een nummer of 'c' in.")
+                continue
+            if idx < 1 or idx > len(ops):
+                print(f"Kies een nummer tussen 1 en {len(ops)}.")
+                continue
+            selected = ops[idx - 1]
+            confirm = input(f"Weet je zeker dat je opvolging id={getattr(selected,'id','?')} wilt verwijderen? (j/n): ").strip().lower()
+            if confirm.startswith("j"):
+                try:
+                    success = OpvolgingRepository.delete(getattr(selected, "id"))
+                    if success:
+                        print("Opvolging verwijderd.")
+                        return True
+                    else:
+                        print("Opvolging kon niet verwijderd worden.")
+                        return False
+                except Exception as exc:
+                    print("Fout bij verwijderen:", exc)
+                    return False
+            else:
+                return False
 
-        if not choice or choice.lower() == "b":
-            # Clear and return to main screen for nicer UX
+
+# ------------------------------
+def edit_opvolging_for_student(student: object, console: Any = None) -> bool:
+    """
+    Interactieve routine om een bestaande opvolging te bewerken.
+    Returns True when a modification occurred, False otherwise.
+    """
+    try:
+        ops = OpvolgingRepository.list_for_student(getattr(student, "id"))
+    except Exception as exc:
+        if _HAS_RICH and console is not None:
+            console.print(Panel(f"Fout bij ophalen van opvolgingen: {exc}", title="Fout", style="red"))
+        else:
+            print("Fout bij ophalen van opvolgingen:", exc)
+        return False
+
+    if not ops:
+        if _HAS_RICH and console is not None:
+            console.print(Panel("(geen opvolgingen gevonden)", title="Opvolgingen", style="dim"))
+        else:
+            print("(geen opvolgingen gevonden)")
+        return False
+
+    # Toon lijst met opvolgingen en laat selectie maken
+    if _HAS_RICH and console is not None:
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("#", width=3, justify="right")
+        table.add_column("ID", style="cyan", width=6)
+        table.add_column("Datum", style="green")
+        table.add_column("Type", style="yellow")
+        table.add_column("Omschrijving", style="white")
+        for i, o in enumerate(ops, start=1):
+            table.add_row(str(i), str(getattr(o, "id", "?")), str(getattr(o, "datum", "")), str(getattr(o, "type", "")), str(getattr(o, "omschrijving", "")))
+        console.print(Panel(table, title="Kies te bewerken opvolging"))
+        # Ask for index
+        while True:
+            try:
+                choice = Prompt.ask("Voer nummer van opvolging om te bewerken (of 'c' om te annuleren)")
+            except Exception:
+                choice = input("Voer nummer van opvolging om te bewerken (of 'c' om te annuleren): ").strip()
+            if not choice:
+                continue
+            if choice.lower() == "c":
+                return False
+            try:
+                idx = int(choice)
+            except Exception:
+                console.print("[red]Ongeldige invoer, voer een nummer of 'c' in.[/red]")
+                continue
+            if idx < 1 or idx > len(ops):
+                console.print(f"[red]Kies een nummer tussen 1 en {len(ops)}.[/red]")
+                continue
+            selected = ops[idx - 1]
+
+            # Datum (prefilled)
+            try:
+                current_datum = str(getattr(selected, "datum", "") or "")
+                new_datum = Prompt.ask("  Datum (YYYY-MM-DD)", default=current_datum)
+            except Exception:
+                new_datum = input(f"  Datum (YYYY-MM-DD) [{getattr(selected,'datum','')}]: ").strip() or getattr(selected, "datum", "")
+            new_datum_norm = validate_date_str(new_datum)
+            if new_datum_norm is None:
+                console.print("[red]Ongeldige datum. Bewerking afgebroken.[/red]") if _HAS_RICH and console is not None else print("Ongeldige datum. Bewerking afgebroken.")
+                return False
+
+            # Type (prefilled)
+            try:
+                current_type = str(getattr(selected, "type", "contact") or "contact")
+                new_type = Prompt.ask("  Type", choices=["contact", "controle"], default=current_type)
+            except Exception:
+                new_type = input(f"  Type ('contact' of 'controle') [{getattr(selected,'type','contact')}]: ").strip() or getattr(selected, "type", "contact")
+            if new_type not in ("contact", "controle"):
+                console.print("[red]Ongeldig type. Bewerking afgebroken.[/red]") if _HAS_RICH and console is not None else print("Ongeldig type. Bewerking afgebroken.")
+                return False
+
+            # Omschrijving (prefilled)
+            try:
+                current_oms = str(getattr(selected, "omschrijving", "") or "")
+                new_oms = Prompt.ask("  Omschrijving (optioneel)", default=current_oms)
+            except Exception:
+                new_oms = input(f"  Omschrijving (optioneel) [{getattr(selected,'omschrijving','') or ''}]: ").strip()
+            new_oms_val = new_oms if new_oms else None
+
+            # Perform update
+            try:
+                updated = OpvolgingRepository.update(getattr(selected, "id"), {"datum": new_datum_norm, "type": new_type, "omschrijving": new_oms_val})
+                if updated:
+                    if _HAS_RICH and console is not None:
+                        console.print(Panel("Opvolging bijgewerkt.", title="Succes", style="green"))
+                    else:
+                        print("Opvolging bijgewerkt.")
+                    return True
+                else:
+                    if _HAS_RICH and console is not None:
+                        console.print(Panel("Opvolging niet gevonden.", title="Fout", style="red"))
+                    else:
+                        print("Opvolging niet gevonden.")
+                    return False
+            except Exception as exc:
+                if _HAS_RICH and console is not None:
+                    console.print(Panel(f"Fout bij bijwerken: {exc}", title="Fout", style="red"))
+                else:
+                    print("Fout bij bijwerken:", exc)
+                return False
+    else:
+        # Plain text path
+        print("Kies te bewerken opvolging:")
+        for i, o in enumerate(ops, start=1):
+            print(f"  {i:2d}. ID={getattr(o,'id','?')}, Datum={getattr(o,'datum','')}, Type={getattr(o,'type','')}, Omschrijving={getattr(o,'omschrijving','')}")
+        while True:
+            choice = input("Voer nummer van opvolging om te bewerken (of 'c' om te annuleren): ").strip()
+            if not choice:
+                continue
+            if choice.lower() == "c":
+                return False
+            try:
+                idx = int(choice)
+            except Exception:
+                print("Ongeldige invoer, voer een nummer of 'c' in.")
+                continue
+            if idx < 1 or idx > len(ops):
+                print(f"Kies een nummer tussen 1 en {len(ops)}.")
+                continue
+            selected = ops[idx - 1]
+            # prompt fields
+            new_datum = input(f"  Datum (YYYY-MM-DD) [{getattr(selected,'datum','')}]: ").strip() or getattr(selected, "datum", "")
+            new_datum_norm = validate_date_str(new_datum)
+            if new_datum_norm is None:
+                print("Ongeldige datum. Bewerking afgebroken.")
+                return False
+            new_type = input(f"  Type ('contact' of 'controle') [{getattr(selected,'type','contact')}]: ").strip() or getattr(selected, "type", "contact")
+            if new_type not in ("contact", "controle"):
+                print("Ongeldig type. Bewerking afgebroken.")
+                return False
+            new_oms = input(f"  Omschrijving (optioneel) [{getattr(selected,'omschrijving','') or ''}]: ").strip()
+            new_oms_val = new_oms if new_oms else None
+            try:
+                updated = OpvolgingRepository.update(getattr(selected, "id"), {"datum": new_datum_norm, "type": new_type, "omschrijving": new_oms_val})
+                if updated:
+                    print("Opvolging bijgewerkt.")
+                    return True
+                else:
+                    print("Opvolging niet gevonden.")
+                    return False
+            except Exception as exc:
+                print("Fout bij bijwerken:", exc)
+                return False
+# ------------------------------
+# Student detail screen (keeps open until 'b')
+# ------------------------------
+def student_detail_loop(student: object, console: Any = None) -> None:
+    """
+    Show student detail and actions in a loop until user presses 'b'.
+    Works with both Rich (console provided) and plain-text (console None).
+    """
+    while True:
+        # Render header + opvolgingen
+        if _HAS_RICH and console is not None:
+            # Clear and render rich detail
             try:
                 console.clear()
             except Exception:
                 pass
+            title = Text(f"Details student: {student.voornaam} {student.naam}", style="bold white on green")
+            console.print(Panel(title, expand=True))
+            info_table = Table(show_header=False, box=None)
+            info_table.add_column(justify="right", style="bold")
+            info_table.add_column()
+            info_table.add_row("ID", str(getattr(student, "id", "?")))
+            info_table.add_row("Bedrijf", student.bedrijf or "-")
+            info_table.add_row("ACE project", student.aceproject or "-")
+            info_table.add_row("Opvolgingsdocument", student.opvolgingsdocument or "-")
+            console.print(info_table)
+            console.print()
+
+            # Opvolgingen tabel
+            ops = OpvolgingRepository.list_for_student(getattr(student, "id"))
+            if not ops:
+                console.print(Panel("(geen opvolgingen gevonden)", title="Opvolgingen", style="dim"))
+            else:
+                ops_table = Table(show_header=True, header_style="bold magenta")
+                ops_table.add_column("#", width=3, justify="right")
+                ops_table.add_column("ID", style="cyan", width=6)
+                ops_table.add_column("Datum", style="green")
+                ops_table.add_column("Type", style="yellow")
+                ops_table.add_column("Omschrijving", style="white")
+                for i, o in enumerate(ops, start=1):
+                    ops_table.add_row(
+                        str(i),
+                        str(getattr(o, "id", "?")),
+                        str(getattr(o, "datum", "")),
+                        str(getattr(o, "type", "")),
+                        str(getattr(o, "omschrijving", "")),
+                    )
+                console.print(Panel(ops_table, title="Opvolgingen"))
+
+            # Actions prompt
+            choice = prompt_student_action_rich(console)
+        else:
+            # Plain text rendering
+            print("=" * 80)
+            print("Student:".ljust(12), f"{student.voornaam} {student.naam}")
+            print("ID:".ljust(12), getattr(student, "id", "?"))
+            print("Bedrijf:".ljust(12), student.bedrijf or "-")
+            print("ACE project:".ljust(12), student.aceproject or "-")
+            print("Opvolgingsdocument:".ljust(12), student.opvolgingsdocument or "-")
+            print("-" * 80)
+            print("Opvolgingen:")
+            ops = OpvolgingRepository.list_for_student(getattr(student, "id"))
+            if not ops:
+                print("  (geen opvolgingen gevonden)")
+            else:
+                for i, o in enumerate(ops, start=1):
+                    oms = getattr(o, "omschrijving", "")
+                    print(f"  {i:2d}. ID={getattr(o,'id','?')}, Datum={getattr(o,'datum', '')}, Type={getattr(o,'type','')}, Omschrijving={oms}")
+            print("-" * 80)
+            choice = prompt_student_action_text()
+
+        # Handle choice
+        if not choice or choice.lower() == "b":
+            # Clear rich screen before returning
+            if _HAS_RICH and console is not None:
+                try:
+                    console.clear()
+                except Exception:
+                    pass
             return
 
         if choice == "1":
-            console.print(Panel("Wijzig studentgegevens: nog niet geïmplementeerd (placeholder).", title="Placeholder", style="yellow"))
-            Prompt.ask("Druk op Enter om terug te keren", default="")
-            # blijf in detailweergave
-            try:
-                console.clear()
-            except Exception:
-                pass
-            continue
-
-        elif choice == "2":
-            # Interactieve datuminvoer met default vandaag en validatie
-            today_str = date.today().isoformat()
-            while True:
+            # Placeholder edit student
+            if _HAS_RICH and console is not None:
+                console.print(Panel("Wijzig studentgegevens: nog niet geïmplementeerd.", title="Placeholder", style="yellow"))
+                Prompt.ask("Druk op Enter om terug te keren", default="")
                 try:
-                    datum_input = Prompt.ask(f"  Datum (YYYY-MM-DD) [ENTER = {today_str}]", default=today_str)
+                    console.clear()
                 except Exception:
-                    datum_input = input(f"  Datum (YYYY-MM-DD) [ENTER = {today_str}]: ").strip()
-                    if not datum_input:
-                        datum_input = today_str
-                datum_norm = validate_date_str(datum_input)
-                if datum_norm is None:
-                    console.print("[red]Ongeldige datum. Gebruik YYYY-MM-DD (bijv. 2023-12-31).[/red]")
-                    continue
-                datum = datum_norm
-                break
-
-            # Type met keuzemogelijkheden
-            try:
-                type_input = Prompt.ask("  Type", choices=["contact", "controle"], default="contact")
-            except Exception:
-                while True:
-                    type_input = input("  Type ('contact' of 'controle'): ").strip()
-                    if type_input in ("contact", "controle"):
-                        break
-                    console.print("[red]Ongeldig type. Voer 'contact' of 'controle' in.[/red]")
-
-            # Omschrijving (optioneel, tekstveld)
-            try:
-                oms_txt = Prompt.ask("  Omschrijving (optioneel)", default="")
-            except Exception:
-                oms_txt = input("  Omschrijving (optioneel): ").strip()
-            oms_val = oms_txt if oms_txt else None
-
-            data = {
-                "datum": datum,
-                "type": type_input,
-                "omschrijving": oms_val,
-                "student": getattr(student, "id"),
-            }
-            try:
-                new_op = OpvolgingRepository.create(data)
-                console.print(Panel(f"Opvolging succesvol toegevoegd (id={getattr(new_op, 'id', '?')}).", title="Succes", style="green"))
-            except Exception as e:
-                console.print(Panel(f"Fout bij toevoegen van opvolging: {e}", title="Fout", style="red"))
-            Prompt.ask("Druk op Enter om terug te keren", default="")
-            # blijf in detailweergave - scherm wissen en hertekenen
-            try:
-                console.clear()
-            except Exception:
-                pass
+                    pass
+            else:
+                print("Wijzig studentgegevens: nog niet geïmplementeerd.")
+                input("Druk op Enter om terug te keren...")
             continue
 
-        elif choice == "3":
-            console.print(Panel("Opvolging verwijderen: nog niet geïmplementeerd (placeholder).", title="Placeholder", style="yellow"))
-            Prompt.ask("Druk op Enter om terug te keren", default="")
-            try:
-                console.clear()
-            except Exception:
-                pass
+        if choice == "2":
+            # Add opvolging and remain in detail view
+            added = add_opvolging_for_student(student, console if _HAS_RICH else None)
+            if _HAS_RICH and console is not None:
+                Prompt.ask("Druk op Enter om terug te keren", default="")
+                try:
+                    console.clear()
+                except Exception:
+                    pass
+            else:
+                input("Druk op Enter om terug te keren...")
+            # loop continues, showing updated list
             continue
 
-        elif choice == "4":
-            console.print(Panel("Opvolging bewerken: nog niet geïmplementeerd (placeholder).", title="Placeholder", style="yellow"))
-            Prompt.ask("Druk op Enter om terug te keren", default="")
-            try:
-                console.clear()
-            except Exception:
-                pass
+        if choice == "3":
+            # Delete an opvolging and remain in the detail view
+            deleted = delete_opvolging_for_student(student, console if _HAS_RICH else None)
+            if _HAS_RICH and console is not None:
+                Prompt.ask("Druk op Enter om terug te keren", default="")
+                try:
+                    console.clear()
+                except Exception:
+                    pass
+            else:
+                input("Druk op Enter om terug te keren...")
+            # loop continues, showing updated list
             continue
 
-        else:
+        if choice == "4":
+            # Edit an opvolging and remain in the detail view
+            edited = edit_opvolging_for_student(student, console if _HAS_RICH else None)
+            if _HAS_RICH and console is not None:
+                Prompt.ask("Druk op Enter om terug te keren", default="")
+                try:
+                    console.clear()
+                except Exception:
+                    pass
+            else:
+                input("Druk op Enter om terug te keren...")
+            # loop continues to show updated list
+            continue
+
+        # Unknown option
+        if _HAS_RICH and console is not None:
             console.print("[red]Onbekende optie.[/red]")
             Prompt.ask("Druk op Enter om terug te keren", default="")
             try:
                 console.clear()
             except Exception:
                 pass
-            continue
+        else:
+            print("Onbekende optie.")
+            input("Druk op Enter om terug te keren...")
 
 
+# ------------------------------
+# Prompts for actions (shared)
+# ------------------------------
+def prompt_student_action_text() -> str:
+    for line in STUDENT_ACTIONS:
+        print(line)
+    print()
+    return input("Kies actie (nummer of 'b' om terug te keren): ").strip()
+
+
+def prompt_student_action_rich(console: Any) -> str:
+    actions = Text()
+    actions.append(STUDENT_ACTIONS[0] + "\n", style="bold")
+    for line in STUDENT_ACTIONS[1:]:
+        actions.append(line + "\n")
+    console.print(Panel(actions, subtitle="Gebruik", expand=False))
+    try:
+        return Prompt.ask("Kies actie (nummer of 'b' om terug te keren)")
+    except Exception:
+        return input("Kies actie (nummer of 'b' om terug te keren): ").strip()
+
+
+# ------------------------------
+# Main loop
+# ------------------------------
 def main() -> None:
-    """
-    Hoofdloop van de CLI. Geen CLI-argumenten — alles gebeurt via menu-keuzes.
-    """
-    if Console is None:
-        # Fallback pad: geen rich beschikbaar
-        use_rich = False
-        console = None
-    else:
-        use_rich = True
+    if _HAS_RICH:
         console = Console()
-        # Probeer het scherm leeg te maken voor betere UX (niet kritisch)
-        try:
-            console.clear()
-        except Exception:
-            pass
+    else:
+        console = None
 
+    # Start main interactive loop
     while True:
-        # Haal studenten op voordat we renderen zodat we bij nummerkeuze direct de juiste student hebben
+        # Load students
         try:
             students: List[object] = StudentRepository.list_all()  # type: ignore[arg-type]
         except Exception as exc:
-            if use_rich and console is not None:
+            if _HAS_RICH and console is not None:
                 console.print("[red]Fout bij laden van studenten uit de database:[/red]")
                 console.print(f"[red]{exc}[/red]")
             else:
@@ -465,68 +715,60 @@ def main() -> None:
                 print(" ", exc)
             return
 
-        # Render de lijst
-        if use_rich and console is not None:
-            render_table_rich(console, students)
+        # Render students list
+        if _HAS_RICH and console is not None:
+            try:
+                console.clear()
+            except Exception:
+                pass
+            render_students_rich(console, students)
             try:
                 choice = Prompt.ask("Kies optie (nummer of 'q' om te stoppen)")
             except Exception:
                 choice = input("Kies optie (nummer of 'q' om te stoppen): ")
         else:
-            render_table_text(students)
+            render_students_text(students)
             choice = input("Kies optie (nummer of 'q' om te stoppen): ")
 
         if not choice:
             continue
         if choice.strip().lower() == "q":
-            if use_rich and console is not None:
+            if _HAS_RICH and console is not None:
                 console.print(Panel(Text("Tot ziens.", style="bold"), expand=False))
             else:
                 print("Tot ziens.")
             return
 
-        # Probeer numerieke keuze - kaart die naar student detail
+        # Numeric selection -> student detail
         try:
             num = int(choice)
-            if num < 1 or num > len(students):
-                if use_rich and console is not None:
-                    console.print(f"[red]Ongeldig nummer: {num}. Kies een nummer tussen 1 en {len(students)}.[/red]")
-                else:
-                    print(f"Ongeldig nummer: {num}. Kies een nummer tussen 1 en {len(students)}.")
-                continue
-
-            student = students[num - 1]
-            # Toon detailweergave met opvolgingen en acties (placeholders)
-            if use_rich and console is not None:
-                _render_student_detail_rich(console, student)
-            else:
-                _render_student_detail_text(student)
-
-            # na retour naar hoofdscherm, probeer scherm te wissen voor nettere UX
-            if use_rich and console is not None:
-                try:
-                    console.clear()
-                except Exception:
-                    pass
-
-            continue
         except ValueError:
-            if use_rich and console is not None:
+            if _HAS_RICH and console is not None:
                 console.print("[red]Onbekende optie. Voer een nummer of 'q' in.[/red]")
             else:
                 print("Onbekende optie. Voer een nummer of 'q' in.")
             continue
+
+        if num < 1 or num > len(students):
+            if _HAS_RICH and console is not None:
+                console.print(f"[red]Ongeldig nummer: {num}. Kies een nummer tussen 1 en {len(students)}.[/red]")
+            else:
+                print(f"Ongeldig nummer: {num}. Kies een nummer tussen 1 en {len(students)}.")
+            continue
+
+        student = students[num - 1]
+        # Enter student detail loop (stays there until user presses 'b')
+        student_detail_loop(student, console if _HAS_RICH else None)
 
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        # Nettere afsluiting bij Ctrl-C
-        try:
-            if Console is not None:
+        if _HAS_RICH:
+            try:
                 Console().print("\n[bold]Afgebroken door gebruiker.[/bold]")
-            else:
+            except Exception:
                 print("\nAfgebroken door gebruiker.")
-        except Exception:
-            pass
+        else:
+            print("\nAfgebroken door gebruiker.")
