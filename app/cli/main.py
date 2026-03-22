@@ -10,10 +10,12 @@ Behavior:
 - Show list of students with their most recent opvolging date.
 - Choose a student number to open the student detail screen.
 - In the student detail screen you can:
-  - Edit student (placeholder)
+  - Edit student
   - Add opvolging (implemented, with date validation and default to today)
-  - Delete opvolging (placeholder)
-  - Edit opvolging (placeholder)
+  - Delete opvolging (implemented)
+  - Edit opvolging (implemented)
+  - Open opvolgingsdocument (implemented)
+  - Open ACE project URL in default browser (implemented)
   - Press 'b' to return to the main screen
 
 The CLI prefers `rich` for nicer output but falls back to plain text if it's not installed.
@@ -23,6 +25,10 @@ from __future__ import annotations
 
 from typing import Any, List, Optional, TYPE_CHECKING
 from datetime import date
+import os
+import subprocess
+import shlex
+import webbrowser
 
 try:
     from rich.console import Console
@@ -37,7 +43,7 @@ except Exception:
     _HAS_RICH = False
 
 if TYPE_CHECKING:
-    # Import Rich symbols only for type checking / IDEs. These imports are not required at runtime.
+    # Rich types available for type checkers and IDEs only
     from rich.console import Console
     from rich.table import Table
     from rich.panel import Panel
@@ -45,9 +51,6 @@ if TYPE_CHECKING:
     from rich.align import Align
     from rich.text import Text
 
-import os
-import subprocess
-import shlex
 from app.repository.repository import StudentRepository, OpvolgingRepository
 
 # Centralized UI text
@@ -64,6 +67,7 @@ STUDENT_ACTIONS = [
     "  3 - Verwijder opvolging",
     "  4 - Bewerk opvolging",
     "  5 - Open opvolgingsdocument",
+    "  6 - Open ACE project (browser)",
     "  b - Terug naar hoofdscherm",
 ]
 
@@ -378,7 +382,6 @@ def delete_opvolging_for_student(student: object, console: Any = None) -> bool:
                 return False
 
 
-# ------------------------------
 def edit_opvolging_for_student(student: object, console: Any = None) -> bool:
     """
     Interactieve routine om een bestaande opvolging te bewerken.
@@ -511,6 +514,7 @@ def edit_opvolging_for_student(student: object, console: Any = None) -> bool:
             if new_type not in ("contact", "controle"):
                 print("Ongeldig type. Bewerking afgebroken.")
                 return False
+
             new_oms = input(f"  Omschrijving (optioneel) [{getattr(selected,'omschrijving','') or ''}]: ").strip()
             new_oms_val = new_oms if new_oms else None
             try:
@@ -524,9 +528,8 @@ def edit_opvolging_for_student(student: object, console: Any = None) -> bool:
             except Exception as exc:
                 print("Fout bij bijwerken:", exc)
                 return False
-# ------------------------------
-# Student detail screen (keeps open until 'b')
-# ------------------------------
+
+
 def open_document_for_student(student: object, console: Any = None) -> bool:
     """
     Open the document referenced by `student.opvolgingsdocument` using the OS default application.
@@ -575,10 +578,9 @@ def open_document_for_student(student: object, console: Any = None) -> bool:
     try:
         cmd_parts = shlex.split(open_cmd) + [doc_path]
         # On Windows, `start` is a shell builtin; use shell=True in that case
-        use_shell = False
         if os.name == "nt" and cmd_parts and cmd_parts[0].lower() == "start":
             # build a shell command string
-            shell_cmd = f"start \"\" \"{doc_path}\""
+            shell_cmd = f'start "" "{doc_path}"'
             subprocess.Popen(shell_cmd, shell=True)
         else:
             subprocess.Popen(cmd_parts)
@@ -595,6 +597,49 @@ def open_document_for_student(student: object, console: Any = None) -> bool:
         return False
 
 
+def open_ace_project(student: object, console: Any = None) -> bool:
+    """
+    Open the ACE project URL stored in student.aceproject in the system's default browser.
+
+    Returns True when the browser open call was issued, False otherwise.
+    """
+    url = getattr(student, "aceproject", None)
+    if not url:
+        if _HAS_RICH and console is not None:
+            console.print(Panel("(Geen ACE project URL ingesteld voor deze student)", title="Info", style="dim"))
+        else:
+            print("(Geen ACE project URL ingesteld voor deze student)")
+        return False
+
+    # Basic sanity: ensure it looks like a URL (simple check)
+    if not (url.startswith("http://") or url.startswith("https://")):
+        # If it looks like missing scheme, try to add http://
+        if url.startswith("www."):
+            url_to_open = "http://" + url
+        else:
+            url_to_open = url
+    else:
+        url_to_open = url
+
+    try:
+        # webbrowser.open is cross-platform and uses the default browser
+        webbrowser.open(url_to_open, new=2)
+        if _HAS_RICH and console is not None:
+            console.print(Panel(f"ACE project geopend in browser: {url_to_open}", title="Info", style="green"))
+        else:
+            print(f"ACE project geopend in browser: {url_to_open}")
+        return True
+    except Exception as exc:
+        if _HAS_RICH and console is not None:
+            console.print(Panel(f"Fout bij openen URL: {exc}", title="Fout", style="red"))
+        else:
+            print("Fout bij openen URL:", exc)
+        return False
+
+
+# ------------------------------
+# Student detail screen (keeps open until 'b')
+# ------------------------------
 def student_detail_loop(student: object, console: Any = None) -> None:
     """
     Show student detail and actions in a loop until user presses 'b'.
@@ -847,6 +892,19 @@ def student_detail_loop(student: object, console: Any = None) -> None:
             else:
                 input("Druk op Enter om terug te keren...")
             # loop continues showing updated list / same details
+            continue
+
+        if choice == "6":
+            # Open ACE project URL in default browser
+            opened = open_ace_project(student, console if _HAS_RICH else None)
+            if _HAS_RICH and console is not None:
+                Prompt.ask("Druk op Enter om terug te keren", default="")
+                try:
+                    console.clear()
+                except Exception:
+                    pass
+            else:
+                input("Druk op Enter om terug te keren...")
             continue
 
         # Unknown option
