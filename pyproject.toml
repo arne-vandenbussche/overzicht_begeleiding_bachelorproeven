@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# PEP 621 project metadata below. This makes the project installable with:
+#   pip install -e .
+# and also provides a console script entrypoint for the interactive CLI.
+
+[project]
+name = "overzicht_begeleiding_bachelorproeven"
+version = "0.1.0"
+description = "Eenvoudige CLI-applicatie om opvolgingen en contacten van bachelorproeven te beheren en te bekijken."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+
+authors = [
+    { name = "Arne Vandenbussche", email = "arne@arnevandenbussche.be" }
+]
+
+# Minimal runtime dependencies (keuze uit requirements.txt)
+dependencies = [
+    "SQLAlchemy>=1.4,<3.0",
+    "python-dotenv>=0.21.0",
+    "rich>=13.0.0",
+]
+
+# Provide a console script so the app can be started with the 'overzicht' command
+[project.scripts]
+overzicht = "app.cli.main:main"
+
+# Optional project URLs
+[project.urls]
+"Homepage" = "https://example.org/overzicht_begeleiding_bachelorproeven"
+"Source" = "https://example.org/overzicht_begeleiding_bachelorproeven/source"
+
+# Note: setuptools-specific configuration is provided in setup.cfg to maintain
+# compatibility with various build backends and legacy tooling. The [tool.setuptools]
+# table has been intentionally removed from this pyproject.toml to avoid conflicting
+# declarations. See setup.cfg for setuptools-specific options.
+
+# Optional: enable editable installs that are less strict with setuptools versions.
+# The build-system 'requires' above is sufficient for modern pip/setuptools.

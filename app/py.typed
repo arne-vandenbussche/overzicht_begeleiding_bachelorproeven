@@ -1,0 +1,5 @@
+# Marker file to indicate this package is PEP 561 typed.
+# Presence of this file tells type-checkers (mypy, pyright, etc.) that
+# the `app` package includes type information.
+#
+# The file may be empty; keeping a short comment helps humans.

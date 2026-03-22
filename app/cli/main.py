@@ -128,6 +128,126 @@ def show_students_screen_text(limit: Optional[int] = None) -> None:
     render_table_text(students)
 
 
+def _render_student_detail_text(student: object) -> None:
+    """Tekstfallback: toon studentgegevens en lijst met opvolgingen, en een menu met acties (placeholders)."""
+    print("=" * 80)
+    print("Student:".ljust(12), f"{student.voornaam} {student.naam}")
+    print("ID:".ljust(12), getattr(student, "id", "?"))
+    print("Bedrijf:".ljust(12), student.bedrijf or "-")
+    print("ACE project:".ljust(12), student.aceproject or "-")
+    print("Opvolgingsdocument:".ljust(12), student.opvolgingsdocument or "-")
+    print("-" * 80)
+    print("Opvolgingen:")
+    ops = OpvolgingRepository.list_for_student(getattr(student, "id"))
+    if not ops:
+        print("  (geen opvolgingen gevonden)")
+    else:
+        for i, o in enumerate(ops, start=1):
+            oms = getattr(o, "omschrijving", "")
+            print(f"  {i:2d}. ID={getattr(o,'id','?')}, Datum={getattr(o,'datum', '')}, Type={getattr(o,'type','')}, Omschrijving={oms}")
+    print("-" * 80)
+    print("Acties:")
+    print("  1 - Wijzig studentgegevens")
+    print("  2 - Voeg opvolging toe")
+    print("  3 - Verwijder opvolging")
+    print("  4 - Bewerk opvolging")
+    print("  b - Terug naar hoofdscherm")
+    print()
+    choice = input("Kies actie (nummer of 'b' om terug te keren): ").strip()
+    if not choice or choice.lower() == "b":
+        return
+    if choice == "1":
+        print("Wijzig studentgegevens: nog niet geïmplementeerd (placeholder).")
+        input("Druk op Enter om terug te keren...")
+    elif choice == "2":
+        print("Opvolging toevoegen: nog niet geïmplementeerd (placeholder).")
+        input("Druk op Enter om terug te keren...")
+    elif choice == "3":
+        print("Opvolging verwijderen: nog niet geïmplementeerd (placeholder).")
+        input("Druk op Enter om terug te keren...")
+    elif choice == "4":
+        print("Opvolging bewerken: nog niet geïmplementeerd (placeholder).")
+        input("Druk op Enter om terug te keren...")
+    else:
+        print("Onbekende optie.")
+        input("Druk op Enter om terug te keren...")
+
+
+def _render_student_detail_rich(console: "Console", student: object) -> None:
+    """Rich-weergave: toon studentgegevens en lijst met opvolgingen en menu met acties (placeholders)."""
+    # Studentgegevens
+    title = Text(f"Details student: {student.voornaam} {student.naam}", style="bold white on green")
+    console.print(Panel(title, expand=True))
+    info_table = Table(show_header=False, box=None)
+    info_table.add_column(justify="right", style="bold")
+    info_table.add_column()
+    info_table.add_row("ID", str(getattr(student, "id", "?")))
+    info_table.add_row("Bedrijf", student.bedrijf or "-")
+    info_table.add_row("ACE project", student.aceproject or "-")
+    info_table.add_row("Opvolgingsdocument", student.opvolgingsdocument or "-")
+    console.print(info_table)
+    console.print()
+
+    # Opvolgingen
+    ops = OpvolgingRepository.list_for_student(getattr(student, "id"))
+    if not ops:
+        console.print(Panel("(geen opvolgingen gevonden)", title="Opvolgingen", style="dim"))
+    else:
+        ops_table = Table(show_header=True, header_style="bold magenta")
+        ops_table.add_column("#", width=3, justify="right")
+        ops_table.add_column("ID", style="cyan", width=6)
+        ops_table.add_column("Datum", style="green")
+        ops_table.add_column("Type", style="yellow")
+        ops_table.add_column("Omschrijving", style="white")
+        for i, o in enumerate(ops, start=1):
+            ops_table.add_row(str(i), str(getattr(o, "id", "?")), str(getattr(o, "datum", "")), str(getattr(o, "type", "")), str(getattr(o, "omschrijving", "")))
+        console.print(Panel(ops_table, title="Opvolgingen"))
+
+    # Acties (placeholders)
+    actions = Text()
+    actions.append("Acties:\n", style="bold")
+    actions.append("  1 - Wijzig studentgegevens\n")
+    actions.append("  2 - Voeg opvolging toe\n")
+    actions.append("  3 - Verwijder opvolging\n")
+    actions.append("  4 - Bewerk opvolging\n")
+    actions.append("  b - Terug naar hoofdscherm\n")
+    console.print(Panel(actions, subtitle="Gebruik", expand=False))
+
+    try:
+        choice = Prompt.ask("Kies actie (nummer of 'b' om terug te keren)")
+    except Exception:
+        choice = input("Kies actie (nummer of 'b' om terug te keren): ")
+
+    if not choice or choice.lower() == "b":
+        # Clear and return to main screen for nicer UX
+        try:
+            console.clear()
+        except Exception:
+            pass
+        return
+
+    if choice == "1":
+        console.print(Panel("Wijzig studentgegevens: nog niet geïmplementeerd (placeholder).", title="Placeholder", style="yellow"))
+        Prompt.ask("Druk op Enter om terug te keren", default="")
+    elif choice == "2":
+        console.print(Panel("Opvolging toevoegen: nog niet geïmplementeerd (placeholder).", title="Placeholder", style="yellow"))
+        Prompt.ask("Druk op Enter om terug te keren", default="")
+    elif choice == "3":
+        console.print(Panel("Opvolging verwijderen: nog niet geïmplementeerd (placeholder).", title="Placeholder", style="yellow"))
+        Prompt.ask("Druk op Enter om terug te keren", default="")
+    elif choice == "4":
+        console.print(Panel("Opvolging bewerken: nog niet geïmplementeerd (placeholder).", title="Placeholder", style="yellow"))
+        Prompt.ask("Druk op Enter om terug te keren", default="")
+    else:
+        console.print("[red]Onbekende optie.[/red]")
+        Prompt.ask("Druk op Enter om terug te keren", default="")
+
+    try:
+        console.clear()
+    except Exception:
+        pass
+
+
 def main() -> None:
     """
     Hoofdloop van de CLI. Geen CLI-argumenten — alles gebeurt via menu-keuzes.
@@ -146,15 +266,27 @@ def main() -> None:
             pass
 
     while True:
+        # Haal studenten op voordat we renderen zodat we bij nummerkeuze direct de juiste student hebben
+        try:
+            students: List[object] = StudentRepository.list_all()  # type: ignore[arg-type]
+        except Exception as exc:
+            if use_rich and console is not None:
+                console.print("[red]Fout bij laden van studenten uit de database:[/red]")
+                console.print(f"[red]{exc}[/red]")
+            else:
+                print("Fout bij laden van studenten uit de database:")
+                print(" ", exc)
+            return
+
+        # Render de lijst
         if use_rich and console is not None:
-            show_students_screen_rich(console)
+            render_table_rich(console, students)
             try:
                 choice = Prompt.ask("Kies optie (nummer of 'q' om te stoppen)")
             except Exception:
-                # Fallback naar simple input als Prompt faalt
                 choice = input("Kies optie (nummer of 'q' om te stoppen): ")
         else:
-            show_students_screen_text()
+            render_table_text(students)
             choice = input("Kies optie (nummer of 'q' om te stoppen): ")
 
         if not choice:
@@ -166,26 +298,30 @@ def main() -> None:
                 print("Tot ziens.")
             return
 
-        # Probeer numerieke keuze
+        # Probeer numerieke keuze - kaart die naar student detail
         try:
             num = int(choice)
-            # Placeholder gedrag: toon melding en wacht op Enter
+            if num < 1 or num > len(students):
+                if use_rich and console is not None:
+                    console.print(f"[red]Ongeldig nummer: {num}. Kies een nummer tussen 1 en {len(students)}.[/red]")
+                else:
+                    print(f"Ongeldig nummer: {num}. Kies een nummer tussen 1 en {len(students)}.")
+                continue
+
+            student = students[num - 1]
+            # Toon detailweergave met opvolgingen en acties (placeholders)
             if use_rich and console is not None:
-                console.print()
-                console.print(Panel(f"Je hebt student #{num} gekozen.\n\nHet tonen van de opvolgingen is nog niet geïmplementeerd.", title="Opgelet", style="yellow"), justify="center")
-                try:
-                    Prompt.ask("Druk op Enter om terug te keren", default="")
-                except Exception:
-                    input("Druk op Enter om terug te keren...")
-                # Opruimen / scherm wissen voor een nettere terugkeer
+                _render_student_detail_rich(console, student)
+            else:
+                _render_student_detail_text(student)
+
+            # na retour naar hoofdscherm, probeer scherm te wissen voor nettere UX
+            if use_rich and console is not None:
                 try:
                     console.clear()
                 except Exception:
                     pass
-            else:
-                print(f"Je hebt student #{num} gekozen.")
-                print("Het tonen van de opvolgingen van deze student is nog niet geïmplementeerd.")
-                input("Druk op Enter om terug te keren...")
+
             continue
         except ValueError:
             if use_rich and console is not None:
