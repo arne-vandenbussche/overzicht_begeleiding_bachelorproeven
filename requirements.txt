@@ -1,0 +1,7 @@
+# Minimal runtime dependencies for this application
+# - SQLAlchemy: ORM and engine (used in app/db/session.py and models)
+# - python-dotenv: optional .env loading in session setup
+#
+# Pin or narrow versions as you prefer for reproducible installs.
+SQLAlchemy>=1.4,<3.0
+python-dotenv>=0.21.0
