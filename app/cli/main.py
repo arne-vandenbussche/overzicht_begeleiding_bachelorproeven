@@ -45,6 +45,9 @@ if TYPE_CHECKING:
     from rich.align import Align
     from rich.text import Text
 
+import os
+import subprocess
+import shlex
 from app.repository.repository import StudentRepository, OpvolgingRepository
 
 # Centralized UI text
@@ -60,6 +63,7 @@ STUDENT_ACTIONS = [
     "  2 - Voeg opvolging toe",
     "  3 - Verwijder opvolging",
     "  4 - Bewerk opvolging",
+    "  5 - Open opvolgingsdocument",
     "  b - Terug naar hoofdscherm",
 ]
 
@@ -523,6 +527,74 @@ def edit_opvolging_for_student(student: object, console: Any = None) -> bool:
 # ------------------------------
 # Student detail screen (keeps open until 'b')
 # ------------------------------
+def open_document_for_student(student: object, console: Any = None) -> bool:
+    """
+    Open the document referenced by `student.opvolgingsdocument` using the OS default application.
+
+    Environment variables read:
+      - DOCS_BASE_DIR: base directory where relative document paths start.
+      - DOCS_OPEN_CMD: command to open a file with the OS default (e.g. 'open', 'xdg-open', 'start').
+
+    Returns True when the document was successfully opened (or the command was launched),
+    False otherwise.
+    """
+    doc_rel = getattr(student, "opvolgingsdocument", None)
+    if not doc_rel:
+        if _HAS_RICH and console is not None:
+            console.print(Panel("(Geen opvolgingsdocument ingesteld voor deze student)", title="Info", style="dim"))
+        else:
+            print("(Geen opvolgingsdocument ingesteld voor deze student)")
+        return False
+
+    base_dir = os.getenv("DOCS_BASE_DIR") or "."
+    open_cmd = os.getenv("DOCS_OPEN_CMD") or "open"
+
+    # Construct absolute paths
+    base_dir_abs = os.path.abspath(base_dir)
+    doc_path = os.path.abspath(os.path.join(base_dir_abs, doc_rel))
+
+    # Basic safety: ensure doc_path is inside base_dir_abs (prevent traversal)
+    try:
+        if not os.path.commonpath([base_dir_abs, doc_path]).startswith(base_dir_abs):
+            raise ValueError("Document path outside base directory")
+    except Exception:
+        if _HAS_RICH and console is not None:
+            console.print(Panel("Onveilige documentpad (buiten basisdir). Afgebroken.", title="Fout", style="red"))
+        else:
+            print("Onveilige documentpad (buiten basisdir). Afgebroken.")
+        return False
+
+    if not os.path.exists(doc_path):
+        if _HAS_RICH and console is not None:
+            console.print(Panel(f"Document niet gevonden: {doc_path}", title="Fout", style="red"))
+        else:
+            print(f"Document niet gevonden: {doc_path}")
+        return False
+
+    # Prepare command: split open_cmd (may contain flags) and append path
+    try:
+        cmd_parts = shlex.split(open_cmd) + [doc_path]
+        # On Windows, `start` is a shell builtin; use shell=True in that case
+        use_shell = False
+        if os.name == "nt" and cmd_parts and cmd_parts[0].lower() == "start":
+            # build a shell command string
+            shell_cmd = f"start \"\" \"{doc_path}\""
+            subprocess.Popen(shell_cmd, shell=True)
+        else:
+            subprocess.Popen(cmd_parts)
+        if _HAS_RICH and console is not None:
+            console.print(Panel(f"Document geopend: {doc_path}", title="Info", style="green"))
+        else:
+            print(f"Document geopend: {doc_path}")
+        return True
+    except Exception as exc:
+        if _HAS_RICH and console is not None:
+            console.print(Panel(f"Fout bij openen document: {exc}", title="Fout", style="red"))
+        else:
+            print("Fout bij openen document:", exc)
+        return False
+
+
 def student_detail_loop(student: object, console: Any = None) -> None:
     """
     Show student detail and actions in a loop until user presses 'b'.
@@ -602,17 +674,123 @@ def student_detail_loop(student: object, console: Any = None) -> None:
             return
 
         if choice == "1":
-            # Placeholder edit student
+            # Edit studentgegevens (voornaam, naam, bedrijf, aceproject, opvolgingsdocument)
             if _HAS_RICH and console is not None:
-                console.print(Panel("Wijzig studentgegevens: nog niet geïmplementeerd.", title="Placeholder", style="yellow"))
+                # Use rich prompts with defaults
+                try:
+                    current_voornaam = getattr(student, "voornaam", "") or ""
+                    current_naam = getattr(student, "naam", "") or ""
+                    current_bedrijf = getattr(student, "bedrijf", "") or ""
+                    current_ace = getattr(student, "aceproject", "") or ""
+                    current_doc = getattr(student, "opvolgingsdocument", "") or ""
+
+                    new_voornaam = Prompt.ask("  Voornaam", default=current_voornaam)
+                except Exception:
+                    new_voornaam = input(f"  Voornaam [{getattr(student,'voornaam','')}]: ").strip() or getattr(student, "voornaam", "")
+
+                try:
+                    new_naam = Prompt.ask("  Naam", default=current_naam)
+                except Exception:
+                    new_naam = input(f"  Naam [{getattr(student,'naam','')}]: ").strip() or getattr(student, "naam", "")
+
+                try:
+                    new_bedrijf = Prompt.ask("  Bedrijf (optioneel)", default=current_bedrijf)
+                except Exception:
+                    new_bedrijf = input(f"  Bedrijf [{getattr(student,'bedrijf','') or ''}]: ").strip() or getattr(student, "bedrijf", None)
+
+                try:
+                    new_ace = Prompt.ask("  ACE project (optioneel)", default=current_ace)
+                except Exception:
+                    new_ace = input(f"  ACE project [{getattr(student,'aceproject','') or ''}]: ").strip() or getattr(student, "aceproject", None)
+
+                try:
+                    new_doc = Prompt.ask("  Opvolgingsdocument (optioneel)", default=current_doc)
+                except Exception:
+                    new_doc = input(f"  Opvolgingsdocument [{getattr(student,'opvolgingsdocument','') or ''}]: ").strip() or getattr(student, "opvolgingsdocument", None)
+
+                # Build changes dict only for modified fields
+                changes = {}
+                if (new_voornaam or "") != (getattr(student, "voornaam", "") or ""):
+                    changes["voornaam"] = new_voornaam
+                if (new_naam or "") != (getattr(student, "naam", "") or ""):
+                    changes["naam"] = new_naam
+                # treat empty strings as None for optional fields
+                if (new_bedrijf or "") != (getattr(student, "bedrijf", "") or ""):
+                    changes["bedrijf"] = new_bedrijf or None
+                if (new_ace or "") != (getattr(student, "aceproject", "") or ""):
+                    changes["aceproject"] = new_ace or None
+                if (new_doc or "") != (getattr(student, "opvolgingsdocument", "") or ""):
+                    changes["opvolgingsdocument"] = new_doc or None
+
+                if not changes:
+                    console.print(Panel("Geen wijzigingen doorgevoerd.", title="Informatie", style="dim"))
+                    Prompt.ask("Druk op Enter om terug te keren", default="")
+                    try:
+                        console.clear()
+                    except Exception:
+                        pass
+                    continue
+
+                try:
+                    updated = StudentRepository.update(getattr(student, "id"), changes)
+                    if updated:
+                        console.print(Panel("Studentgegevens bijgewerkt.", title="Succes", style="green"))
+                        # refresh local student object: re-fetch from DB
+                        student = StudentRepository.get_by_id(getattr(student, "id"))
+                    else:
+                        console.print(Panel("Student niet gevonden of niet bijgewerkt.", title="Fout", style="red"))
+                except Exception as exc:
+                    console.print(Panel(f"Fout bij bijwerken student: {exc}", title="Fout", style="red"))
+
                 Prompt.ask("Druk op Enter om terug te keren", default="")
                 try:
                     console.clear()
                 except Exception:
                     pass
             else:
-                print("Wijzig studentgegevens: nog niet geïmplementeerd.")
+                # Plain-text path
+                print("Wijzig studentgegevens (laat leeg om huidig te behouden):")
+                current_voornaam = getattr(student, "voornaam", "") or ""
+                current_naam = getattr(student, "naam", "") or ""
+                current_bedrijf = getattr(student, "bedrijf", "") or ""
+                current_ace = getattr(student, "aceproject", "") or ""
+                current_doc = getattr(student, "opvolgingsdocument", "") or ""
+
+                new_voornaam = input(f"  Voornaam [{current_voornaam}]: ").strip() or current_voornaam
+                new_naam = input(f"  Naam [{current_naam}]: ").strip() or current_naam
+                new_bedrijf = input(f"  Bedrijf [{current_bedrijf}]: ").strip()
+                new_ace = input(f"  ACE project [{current_ace}]: ").strip()
+                new_doc = input(f"  Opvolgingsdocument [{current_doc}]: ").strip()
+
+                changes = {}
+                if new_voornaam != current_voornaam:
+                    changes["voornaam"] = new_voornaam
+                if new_naam != current_naam:
+                    changes["naam"] = new_naam
+                if new_bedrijf != current_bedrijf:
+                    changes["bedrijf"] = new_bedrijf or None
+                if new_ace != current_ace:
+                    changes["aceproject"] = new_ace or None
+                if new_doc != current_doc:
+                    changes["opvolgingsdocument"] = new_doc or None
+
+                if not changes:
+                    print("Geen wijzigingen doorgevoerd.")
+                    input("Druk op Enter om terug te keren...")
+                    continue
+
+                try:
+                    updated = StudentRepository.update(getattr(student, "id"), changes)
+                    if updated:
+                        print("Studentgegevens bijgewerkt.")
+                        student = StudentRepository.get_by_id(getattr(student, "id"))
+                    else:
+                        print("Student niet gevonden of niet bijgewerkt.")
+                except Exception as exc:
+                    print("Fout bij bijwerken student:", exc)
+
                 input("Druk op Enter om terug te keren...")
+            # terug naar detailscherm (loop opnieuw)
             continue
 
         if choice == "2":
@@ -655,6 +833,20 @@ def student_detail_loop(student: object, console: Any = None) -> None:
             else:
                 input("Druk op Enter om terug te keren...")
             # loop continues to show updated list
+            continue
+
+        if choice == "5":
+            # Open opvolgingsdocument (if set) in the OS default application
+            opened = open_document_for_student(student, console if _HAS_RICH else None)
+            if _HAS_RICH and console is not None:
+                Prompt.ask("Druk op Enter om terug te keren", default="")
+                try:
+                    console.clear()
+                except Exception:
+                    pass
+            else:
+                input("Druk op Enter om terug te keren...")
+            # loop continues showing updated list / same details
             continue
 
         # Unknown option
